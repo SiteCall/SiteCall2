@@ -3,9 +3,10 @@ import { supabase } from "./supabase";
 
 export default function Operator() {
   const [queue, setQueue] = useState([]);
+  const [cancelled, setCancelled] = useState(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const audioCtxRef = useRef(null);
   const prevQueueLength = useRef(0);
+  const prevQueueIds = useRef([]);
 
   useEffect(() => {
     requestNotificationPermission();
@@ -14,6 +15,12 @@ export default function Operator() {
     const subscription = supabase
       .channel("realtime:calls")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls" }, () => {
+        fetchCalls();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "calls" }, (payload) => {
+        if (payload.new.status === "cancelled") {
+          showCancelled(payload.new.floor);
+        }
         fetchCalls();
       })
       .subscribe();
@@ -29,6 +36,11 @@ export default function Operator() {
     prevQueueLength.current = queue.length;
   }, [queue]);
 
+  function showCancelled(floor) {
+    setCancelled(floor);
+    setTimeout(() => setCancelled(null), 3000);
+  }
+
   async function requestNotificationPermission() {
     if ("Notification" in window) {
       const permission = await Notification.requestPermission();
@@ -39,7 +51,6 @@ export default function Operator() {
   function playAlert() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      audioCtxRef.current = ctx;
       [0, 0.15, 0.3].forEach((delay) => {
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
@@ -99,6 +110,13 @@ export default function Operator() {
           <button style={styles.permissionBtn} onClick={requestNotificationPermission}>
             Enable
           </button>
+        </div>
+      )}
+
+      {cancelled !== null && (
+        <div style={styles.cancelledBanner}>
+          <span style={styles.cancelledIcon}>✕</span>
+          <span style={styles.cancelledText}>Floor {cancelled} — worker cancelled the request</span>
         </div>
       )}
 
@@ -163,9 +181,12 @@ const styles = {
   onlineRow: { display: "flex", alignItems: "center", gap: 6 },
   onlineDot: { width: 7, height: 7, borderRadius: "50%", background: "#4caf50" },
   onlineText: { fontSize: 11, color: "#4caf50" },
-  permissionBanner: { background: "#1a1500", border: "1px solid #3a3000", borderRadius: 0, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" },
+  permissionBanner: { background: "#1a1500", border: "1px solid #3a3000", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" },
   permissionText: { fontSize: 12, color: "#aaa800" },
   permissionBtn: { background: "#3a3000", border: "1px solid #5a5000", borderRadius: 6, padding: "5px 12px", fontSize: 11, color: "#ffeb3b", cursor: "pointer" },
+  cancelledBanner: { background: "#1a0a0a", border: "1px solid #4a1a1a", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, animation: "fadeIn 0.3s ease" },
+  cancelledIcon: { width: 28, height: 28, borderRadius: "50%", background: "#3a1a1a", border: "1px solid #f87171", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#f87171", flexShrink: 0, textAlign: "center", lineHeight: "28px" },
+  cancelledText: { fontSize: 12, color: "#f87171", fontWeight: 500 },
   body: { flex: 1, padding: 14 },
   queueHeader: { marginBottom: 10 },
   sectionLabel: { fontSize: 10, color: "#555", letterSpacing: "0.06em" },
