@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "./supabase";
 
@@ -9,17 +9,42 @@ export default function Worker() {
   const preSelected = floor ? parseInt(floor) : null;
   const [selectedFloor, setSelectedFloor] = useState(preSelected);
   const [status, setStatus] = useState("idle");
+  const [callId, setCallId] = useState(null);
+
+  useEffect(() => {
+    if (!callId) return;
+
+    const subscription = supabase
+      .channel("call-status-" + callId)
+      .on("postgres_changes", {
+        event: "UPDATE",
+        schema: "public",
+        table: "calls",
+        filter: "id=eq." + callId,
+      }, (payload) => {
+        if (payload.new.status === "onway") {
+          setStatus("onway");
+        }
+      })
+      .subscribe();
+
+    return () => supabase.removeChannel(subscription);
+  }, [callId]);
 
   async function handleCall() {
     if (!selectedFloor) return;
     setStatus("sending");
-    const { error } = await supabase
+
+    const { data, error } = await supabase
       .from("calls")
-      .insert([{ floor: selectedFloor, status: "pending" }]);
+      .insert([{ floor: selectedFloor, status: "pending" }])
+      .select();
+
     if (error) {
       console.error(error);
       setStatus("idle");
     } else {
+      setCallId(data[0].id);
       setStatus("received");
     }
   }
@@ -40,6 +65,25 @@ export default function Worker() {
     );
   }
 
+  if (status === "onway") {
+    return (
+      <div style={styles.screen}>
+        <div style={styles.header}>
+          <span style={styles.logo}>Site<span style={styles.logoBlue}>Call</span></span>
+          <span style={styles.liveBadge}>LIVE</span>
+        </div>
+        <div style={styles.centerContent}>
+          <div style={styles.onwayCircle}>🏗️</div>
+          <p style={styles.onwayTitle}>Hoist is on the way</p>
+          <p style={styles.statusSub}>Operator acknowledged · Floor {selectedFloor}</p>
+          <button style={styles.resetBtn} onClick={() => { setStatus("idle"); setSelectedFloor(preSelected); setCallId(null); }}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (status === "received") {
     return (
       <div style={styles.screen}>
@@ -50,9 +94,14 @@ export default function Worker() {
         <div style={styles.centerContent}>
           <div style={styles.checkCircle}>✓</div>
           <p style={styles.statusTitle}>Operator notified</p>
-          <p style={styles.statusSub}>Hoist on the way to floor {selectedFloor}</p>
-          <button style={styles.resetBtn} onClick={() => { setStatus("idle"); setSelectedFloor(preSelected); }}>
-            Call again
+          <p style={styles.statusSub}>Waiting for acknowledgement...</p>
+          <div style={styles.waitingDots}>
+            <div style={styles.dot} />
+            <div style={styles.dot} />
+            <div style={styles.dot} />
+          </div>
+          <button style={styles.resetBtn} onClick={() => { setStatus("idle"); setSelectedFloor(preSelected); setCallId(null); }}>
+            Cancel
           </button>
         </div>
       </div>
@@ -122,5 +171,9 @@ const styles = {
   statusTitle: { fontSize: 16, fontWeight: 600, color: "#e8e8e8" },
   statusSub: { fontSize: 12, color: "#555" },
   checkCircle: { width: 52, height: 52, borderRadius: "50%", background: "#0d2247", border: "2px solid #3d8ef0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#3d8ef0" },
+  onwayCircle: { width: 52, height: 52, borderRadius: "50%", background: "#0d2247", border: "2px solid #3d8ef0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 },
+  onwayTitle: { fontSize: 16, fontWeight: 600, color: "#3d8ef0" },
   resetBtn: { marginTop: 16, background: "#3d8ef0", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 14, fontWeight: 500, color: "#fff", cursor: "pointer" },
+  waitingDots: { display: "flex", gap: 6, marginTop: 4 },
+  dot: { width: 6, height: 6, borderRadius: "50%", background: "#333" },
 };
