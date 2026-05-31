@@ -1,10 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase";
 
 export default function Operator() {
   const [queue, setQueue] = useState([]);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const audioCtxRef = useRef(null);
+  const prevQueueLength = useRef(0);
 
   useEffect(() => {
+    requestNotificationPermission();
     fetchCalls();
 
     const subscription = supabase
@@ -16,6 +20,51 @@ export default function Operator() {
 
     return () => supabase.removeChannel(subscription);
   }, []);
+
+  useEffect(() => {
+    if (queue.length > prevQueueLength.current) {
+      playAlert();
+      sendPushNotification(queue[queue.length - 1]);
+    }
+    prevQueueLength.current = queue.length;
+  }, [queue]);
+
+  async function requestNotificationPermission() {
+    if ("Notification" in window) {
+      const permission = await Notification.requestPermission();
+      setPermissionGranted(permission === "granted");
+    }
+  }
+
+  function playAlert() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      [0, 0.15, 0.3].forEach((delay) => {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime + delay);
+        gainNode.gain.setValueAtTime(0.4, ctx.currentTime + delay);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.3);
+        oscillator.start(ctx.currentTime + delay);
+        oscillator.stop(ctx.currentTime + delay + 0.3);
+      });
+    } catch (e) {
+      console.log("Audio error:", e);
+    }
+  }
+
+  function sendPushNotification(call) {
+    if (permissionGranted && "Notification" in window) {
+      new Notification("SiteCall — New Pickup Request", {
+        body: "Floor " + call.floor + " is waiting for the hoist",
+        icon: "/favicon.svg",
+      });
+    }
+  }
 
   async function fetchCalls() {
     const { data } = await supabase
@@ -43,6 +92,15 @@ export default function Operator() {
           <span style={styles.onlineText}>Online</span>
         </div>
       </div>
+
+      {!permissionGranted && (
+        <div style={styles.permissionBanner}>
+          <span style={styles.permissionText}>⚠️ Enable notifications for call alerts</span>
+          <button style={styles.permissionBtn} onClick={requestNotificationPermission}>
+            Enable
+          </button>
+        </div>
+      )}
 
       <div style={styles.body}>
         <div style={styles.queueHeader}>
@@ -105,6 +163,9 @@ const styles = {
   onlineRow: { display: "flex", alignItems: "center", gap: 6 },
   onlineDot: { width: 7, height: 7, borderRadius: "50%", background: "#4caf50" },
   onlineText: { fontSize: 11, color: "#4caf50" },
+  permissionBanner: { background: "#1a1500", border: "1px solid #3a3000", borderRadius: 0, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" },
+  permissionText: { fontSize: 12, color: "#aaa800" },
+  permissionBtn: { background: "#3a3000", border: "1px solid #5a5000", borderRadius: 6, padding: "5px 12px", fontSize: 11, color: "#ffeb3b", cursor: "pointer" },
   body: { flex: 1, padding: 14 },
   queueHeader: { marginBottom: 10 },
   sectionLabel: { fontSize: 10, color: "#555", letterSpacing: "0.06em" },
